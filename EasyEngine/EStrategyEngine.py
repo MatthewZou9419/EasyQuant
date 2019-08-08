@@ -6,7 +6,7 @@ Created on 2019/8/7 21:16
 """
 import uuid
 
-from EasyUtil.EConstantsUtil import FREQUENCY, COMMISSION, DATA
+from EasyUtil.EConstantsUtil import FREQUENCY, frequency2data_key
 from EasyUtil.EDateUtil import str2date
 from EasyUtil.EMongoUtil import MongoClient
 
@@ -84,8 +84,13 @@ class Engine:
             _universe = [_universe]
         if not isinstance(_portfolio_params, list):
             _portfolio_params = [_portfolio_params]
+        self.client = MongoClient()
+        self.market = list(self.client.get_documents('abstract', 'market'))
+        commission = list(self.client.get_documents('abstract', 'commission'))
+        markets = [v['market'] for v in commission]
+        self.symbols = [v['symbol'] for v in self.market]
         # universe check
-        assert set(_universe) <= set(DATA.keys()), 'No data available!'
+        assert set(_universe) <= set(self.symbols), 'No data available!'
         # date type check
         try:
             _start_date = str2date(_start_date)
@@ -95,7 +100,8 @@ class Engine:
         # frequency check
         assert _frequency in FREQUENCY, \
             'Frequency should be one of {}!'.format(', '.join(FREQUENCY))
-        markets = [c['market'] for c in COMMISSION]
+
+        self.data_key = frequency2data_key(_frequency)
         portfolio = []
         for p in _portfolio_params:
             # params check
@@ -109,7 +115,7 @@ class Engine:
                 'Starting cash should be a positive number!'
             # ptype check
             assert ptype in markets, 'Ptype should be one of {}!'.format(', '.join(markets))
-            commission = COMMISSION[markets.index(ptype)]['commission']
+            commission = commission[markets.index(ptype)]['commission']
 
             portfolio.append(
                 Portfolio(
@@ -134,7 +140,18 @@ class Engine:
             _end_date=_end_date,
             _frequency=_frequency
         )
-        self.client = MongoClient()
+        self.data = self.preload_data()
+
+    def preload_data(self):
+        """
+        预加载universe数据
+        """
+        data = {}
+        for symbol in self.context.universe:
+            market = self.market[self.symbols.index(symbol)]['market']
+            collection_name = '{}|{}|{}'.format(symbol, market, self.data_key)
+            data[symbol] = list(self.client.get_documents('data', collection_name).sort('time'))
+        return data
 
     @staticmethod
     def make_id():
@@ -223,3 +240,6 @@ class Engine:
         """
         按目标价值下单
         """
+
+    def run(self):
+        pass
