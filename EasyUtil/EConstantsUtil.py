@@ -10,11 +10,11 @@ FREQUENCY = ['day', 'minute', 'tick']
 COMMISSION = [
     {
         'market': 'stock_cn',
-        'commission': {'open': 0.00025, 'close': 0.001, 'unit': 100}
+        'commission': {'open': 0.00025, 'close': 0.001, 'min': 5, 'unit': 100}
     }
 ]
-DATA = [
-    {
+DATA = {
+    '000001': [{
         'time': dt.datetime(2019, 1, 1),
         'close': 9.5
     }, {
@@ -29,5 +29,5 @@ DATA = [
     }, {
         'time': dt.datetime(2019, 1, 5),
         'close': 8.23
-    }
-]
+    }]
+}

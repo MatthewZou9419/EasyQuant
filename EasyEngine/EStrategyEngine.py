@@ -47,7 +47,7 @@ class Portfolio:
     """
 
     def __init__(self, _available_cash, _long_positions, _short_positions, _orders, _total_value, _total_return,
-                 _starting_cash, _positions_value, _type):
+                 _starting_cash, _positions_value, _ptype, _commission):
         self.available_cash = _available_cash  # 可用资金
         self.long_positions = _long_positions  # 多仓
         self.short_positions = _short_positions  # 空仓
@@ -56,7 +56,8 @@ class Portfolio:
         self.total_return = _total_return  # 收益率
         self.starting_cash = _starting_cash  # 初始资金
         self.positions_value = _positions_value  # 仓位价值
-        self.type = _type  # 账户类型
+        self.ptype = _ptype  # 账户类型
+        self.commission = _commission  # 手续费
 
 
 class Context:
@@ -78,10 +79,13 @@ class Engine:
     交易引擎类
     """
 
-    def __init__(self, _starting_cash, _universe, _start_date, _end_date, _frequency, _type):
-        # starting cash check
-        assert type(_starting_cash) in [float, int] and _starting_cash > 0, \
-            'Starting cash should be a positive number!'
+    def __init__(self, _universe, _start_date, _end_date, _frequency, _portfolio_params):
+        if not isinstance(_universe, list):
+            _universe = [_universe]
+        if not isinstance(_portfolio_params, list):
+            _portfolio_params = [_portfolio_params]
+        # universe check
+        assert set(_universe) <= set(DATA.keys()), 'No data available!'
         # date type check
         try:
             _start_date = str2date(_start_date)
@@ -91,23 +95,39 @@ class Engine:
         # frequency check
         assert _frequency in FREQUENCY, \
             'Frequency should be one of {}!'.format(', '.join(FREQUENCY))
-        # type check
         markets = [c['market'] for c in COMMISSION]
-        assert _type in markets
+        portfolio = []
+        for p in _portfolio_params:
+            # params check
+            params = {'_starting_cash', '_ptype'}
+            assert set(p.keys()) == params, \
+                'Portfolio parameters should contain {}!'.format(', '.join(params))
+            starting_cash = p['_starting_cash']
+            ptype = p['_ptype']
+            # starting cash check
+            assert type(starting_cash) in [float, int] and starting_cash > 0, \
+                'Starting cash should be a positive number!'
+            # ptype check
+            assert ptype in markets, 'Ptype should be one of {}!'.format(', '.join(markets))
+            commission = COMMISSION[markets.index(ptype)]['commission']
 
-        self.commission = COMMISSION[markets.index(_type)]['commission']
+            portfolio.append(
+                Portfolio(
+                    _available_cash=starting_cash,
+                    _long_positions={},
+                    _short_positions={},
+                    _orders={},
+                    _total_value=starting_cash,
+                    _total_return=0,
+                    _starting_cash=starting_cash,
+                    _positions_value=0,
+                    _ptype=ptype,
+                    _commission=commission
+                )
+            )
+
         self.context = Context(
-            _portfolio=Portfolio(
-                _available_cash=_starting_cash,
-                _long_positions={},
-                _short_positions={},
-                _orders={},
-                _total_value=_starting_cash,
-                _total_return=0,
-                _starting_cash=_starting_cash,
-                _positions_value=0,
-                _type=_type
-            ),
+            _portfolio=portfolio,
             _cur_time=None,
             _universe=_universe,
             _start_date=_start_date,
@@ -129,14 +149,14 @@ class Engine:
         """
         pass
 
-    @staticmethod
-    def order_check(_symbol, _amount, _value, _side):
+    def order_check(self, _symbol, _amount, _value, _side, _pindex):
         """
         下单函数参数检查
         :param _symbol: str
         :param _amount: int or float >= 0
         :param _value: int or float >= 0
         :param _side: str, long or short
+        :param _pindex: int, portfolio index
         """
         assert isinstance(_symbol, str), 'Symbol should be a string!'
         if _amount is not None:
@@ -146,12 +166,13 @@ class Engine:
             assert type(_value) in [float, int] and _value >= 0, \
                 'Value should be a positive number!'
         assert _side in ['long', 'short'], 'Side should be either long or short!'
+        assert _pindex in range(len(self.context.portfolio)), 'Pindex out of range!'
 
-    def order(self, _symbol, _amount, _side='long'):
+    def order(self, _symbol, _amount, _side='long', _pindex=0):
         """
         按数量下单
         """
-        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side)
+        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side, _pindex=_pindex)
 
         cur_time = self.context.cur_time
         '''get price from db'''
@@ -188,20 +209,17 @@ class Engine:
             else:
                 self.context.portfolio.short_positions[_symbol] = new_position
 
-    def order_target(self, _symbol, _amount, _side='long'):
+    def order_target(self, _symbol, _amount, _side='long', _pindex=0):
         """
         按目标数量下单
         """
-        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side)
 
-    def order_value(self, _symbol, _value, _side='long'):
+    def order_value(self, _symbol, _value, _side='long', _pindex=0):
         """
         按价值下单
         """
-        self.order_check(_symbol=_symbol, _amount=None, _value=_value, _side=_side)
 
-    def order_target_value(self, _symbol, _value, _side='long'):
+    def order_target_value(self, _symbol, _value, _side='long', _pindex=0):
         """
         按目标价值下单
         """
-        self.order_check(_symbol=_symbol, _amount=None, _value=_value, _side=_side)
