@@ -4,7 +4,11 @@ Created on 2019/8/7 21:16
 @file: EStrategyEngine.py
 @author: Matt
 """
+import uuid
+
+from EasyUtil.EConstantsUtil import FREQUENCY, COMMISSION, DATA
 from EasyUtil.EDateUtil import str2date
+from EasyUtil.EMongoUtil import MongoClient
 
 
 class Order:
@@ -69,48 +73,135 @@ class Context:
         self.frequency = _frequency  # 运行频率
 
 
-class Trade:
+class Engine:
     """
-    交易类
+    交易引擎类
     """
 
     def __init__(self, _starting_cash, _universe, _start_date, _end_date, _frequency, _type):
         # starting cash check
-        if not isinstance(_starting_cash, float) or _starting_cash <= 0:
-            print('Error! Starting cash should be a positive float number!')
+        assert type(_starting_cash) in [float, int] and _starting_cash > 0, \
+            'Starting cash should be a positive number!'
         # date type check
         try:
             _start_date = str2date(_start_date)
             _end_date = str2date(_end_date)
-        except:
-            print('Error! Date type should be like 2000-01-01!')
-            return
+        except ValueError:
+            raise Exception('Date type should be like Year-Month-Day!')
         # frequency check
-        frequency_list = ['day', 'minute', 'tick']
-        if _frequency not in frequency_list:
-            print('Error! Frequency should be one of {}!'.format(', '.join(frequency_list)))
-            return
+        assert _frequency in FREQUENCY, \
+            'Frequency should be one of {}!'.format(', '.join(FREQUENCY))
         # type check
-        
+        markets = [c['market'] for c in COMMISSION]
+        assert _type in markets
 
-        portfolio = Portfolio(_available_cash=_starting_cash, _long_positions={}, _short_positions={}, _orders={},
-                              _total_value=_starting_cash, _total_return=0, _starting_cash=_starting_cash,
-                              _positions_value=0, _type=_type)
-        self.context = Context(_portfolio=portfolio, _cur_time=None, _universe=_universe, _start_date=_start_date,
-                               _end_date=_end_date, _frequency=_frequency)
+        self.commission = COMMISSION[markets.index(_type)]['commission']
+        self.context = Context(
+            _portfolio=Portfolio(
+                _available_cash=_starting_cash,
+                _long_positions={},
+                _short_positions={},
+                _orders={},
+                _total_value=_starting_cash,
+                _total_return=0,
+                _starting_cash=_starting_cash,
+                _positions_value=0,
+                _type=_type
+            ),
+            _cur_time=None,
+            _universe=_universe,
+            _start_date=_start_date,
+            _end_date=_end_date,
+            _frequency=_frequency
+        )
+        self.client = MongoClient()
+
+    @staticmethod
+    def make_id():
+        return uuid.uuid4().hex
+
+    def update(self):
+        pass
+
+    def calc_commission(self):
+        """
+        计算手续费
+        """
+        pass
+
+    @staticmethod
+    def order_check(_symbol, _amount, _value, _side):
+        """
+        下单函数参数检查
+        :param _symbol: str
+        :param _amount: int or float >= 0
+        :param _value: int or float >= 0
+        :param _side: str, long or short
+        """
+        assert isinstance(_symbol, str), 'Symbol should be a string!'
+        if _amount is not None:
+            assert type(_amount) in [float, int] and _amount >= 0, \
+                'Amount should be a positive number!'
+        if _value is not None:
+            assert type(_value) in [float, int] and _value >= 0, \
+                'Value should be a positive number!'
+        assert _side in ['long', 'short'], 'Side should be either long or short!'
 
     def order(self, _symbol, _amount, _side='long'):
         """
-        下单函数
-        :param _symbol: 标的代码
-        :param _amount: 下单数量
-        :param _side:  多空方向
-        :return:  Order对象
+        按数量下单
         """
-        # symbol check
-        if not isinstance(_symbol, str):
-            print('Error! Symbol should be a string!')
-        # amount check
+        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side)
 
         cur_time = self.context.cur_time
+        '''get price from db'''
+        cur_price = 10
+        '''calc commission from class method'''
+        commission = 5
+        new_order = Order(
+            _add_time=cur_time,
+            _symbol=_symbol,
+            _amount=_amount,
+            _avg_cost=cur_price,
+            _side=_side,
+            _action='open',
+            _commission=commission
+        )
+        self.context.portfolio.orders[self.make_id()] = new_order
 
+        if _side == 'long' and _symbol in self.context.portfolio.long_positions:
+            pass
+        elif _side == 'short' and _symbol in self.context.portfolio.short_positions:
+            pass
+        else:
+            new_position = Position(
+                _symbol=_symbol,
+                _price=cur_price,
+                _avg_cost=cur_price,
+                _init_time=cur_time,
+                _amount=_amount,
+                _value=cur_price * _amount,
+                _side=_side
+            )
+            if _side == 'long':
+                self.context.portfolio.long_positions[_symbol] = new_position
+            else:
+                self.context.portfolio.short_positions[_symbol] = new_position
+
+    def order_target(self, _symbol, _amount, _side='long'):
+        """
+        按目标数量下单
+        """
+        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side)
+
+    def order_value(self, _symbol, _value, _side='long'):
+        """
+        按价值下单
+        """
+        self.order_check(_symbol=_symbol, _amount=None, _value=_value, _side=_side)
+
+    def order_target_value(self, _symbol, _value, _side='long'):
+        """
+        按目标价值下单
+        """
+        self.order_check(_symbol=_symbol, _amount=None, _value=_value, _side=_side)
