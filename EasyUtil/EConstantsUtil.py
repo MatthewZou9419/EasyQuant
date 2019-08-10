@@ -4,39 +4,5 @@ Created on 2019/8/8 上午9:58
 @file: EConstantsUtil.py
 @author: ZouHao
 """
-import datetime as dt
-
 FREQUENCY = ['day', 'minute', 'tick']
-COMMISSION = [
-    {
-        'market': 'stock_cn',
-        'commission': {'open': 0.00025, 'close': 0.001, 'min': 5, 'unit': 100}
-    }
-]
-DATA = {
-    '000001': [{
-        'time': dt.datetime(2019, 1, 1),
-        'close': 9.5
-    }, {
-        'time': dt.datetime(2019, 1, 2),
-        'close': 1.2
-    }, {
-        'time': dt.datetime(2019, 1, 3),
-        'close': 1.72
-    }, {
-        'time': dt.datetime(2019, 1, 4),
-        'close': 6.54
-    }, {
-        'time': dt.datetime(2019, 1, 5),
-        'close': 8.23
-    }]
-}
-
-
-def frequency2data_key(_frequency):
-    if _frequency == 'day':
-        return 'kline_1d'
-    elif _frequency == 'minute':
-        return 'kline_1m'
-    elif _frequency == 'tick':
-        return 'tick'
+PORTFOLIO_PARAMS = ['_starting_cash']

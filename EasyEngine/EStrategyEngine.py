@@ -6,91 +6,29 @@ Created on 2019/8/7 21:16
 """
 import uuid
 
-from EasyUtil.EConstantsUtil import FREQUENCY, frequency2data_key
+from EasyEngine.EStrategyTarget import Order, Position, Portfolio, Context
+from EasyUtil.EConstantsUtil import FREQUENCY, PORTFOLIO_PARAMS
+from EasyUtil.EConvertUtil import frequency2data_key
 from EasyUtil.EDateUtil import str2date
 from EasyUtil.EMongoUtil import MongoClient
-
-
-class Order:
-    """
-    订单类
-    """
-
-    def __init__(self, _add_time, _symbol, _amount, _avg_cost, _side, _action, _commission):
-        self.add_time = _add_time  # 时间
-        self.symbol = _symbol  # 标的
-        self.amount = _amount  # 数量
-        self.avg_cost = _avg_cost  # 平均成本
-        self.side = _side  # 多空方向
-        self.action = _action  # 开平方向
-        self.commission = _commission  # 手续费
-
-
-class Position:
-    """
-    持仓标的类
-    """
-
-    def __init__(self, _symbol, _price, _avg_cost, _init_time, _amount, _value, _side):
-        self.symbol = _symbol  # 标的
-        self.price = _price  # 最新价
-        self.avg_cost = _avg_cost  # 平均成本
-        self.init_time = _init_time  # 建仓时间
-        self.amount = _amount  # 数量
-        self.value = _value  # 价值
-        self.side = _side  # 多空方向
-
-
-class Portfolio:
-    """
-    账户类
-    """
-
-    def __init__(self, _available_cash, _long_positions, _short_positions, _orders, _total_value, _total_return,
-                 _starting_cash, _positions_value, _ptype, _commission):
-        self.available_cash = _available_cash  # 可用资金
-        self.long_positions = _long_positions  # 多仓
-        self.short_positions = _short_positions  # 空仓
-        self.orders = _orders  # 所有订单
-        self.total_value = _total_value  # 总价值
-        self.total_return = _total_return  # 收益率
-        self.starting_cash = _starting_cash  # 初始资金
-        self.positions_value = _positions_value  # 仓位价值
-        self.ptype = _ptype  # 账户类型
-        self.commission = _commission  # 手续费
-
-
-class Context:
-    """
-    策略信息类
-    """
-
-    def __init__(self, _portfolio, _cur_time, _universe, _start_date, _end_date, _frequency):
-        self.portfolio = _portfolio  # 资产组合
-        self.cur_time = _cur_time  # 当前时间
-        self.universe = _universe  # 标的池
-        self.start_date = _start_date  # 策略开始日期
-        self.end_date = _end_date  # 策略结束日期
-        self.frequency = _frequency  # 运行频率
 
 
 class Engine:
     """
     交易引擎类
     """
+    client = MongoClient()
+    data = {}
 
-    def __init__(self, _universe, _start_date, _end_date, _frequency, _portfolio_params):
-        if not isinstance(_universe, list):
-            _universe = [_universe]
+    def __init__(self, _start_date, _end_date, _frequency, _portfolio_params):
+        """
+        :param _start_date: 回测开始日期
+        :param _end_date: 回测结束日期
+        :param _frequency: 回测频率
+        :param _portfolio_params: portfolio参数
+        """
         if not isinstance(_portfolio_params, list):
             _portfolio_params = [_portfolio_params]
-        self.client = MongoClient()
-        self.market = list(self.client.get_documents('abstract', 'market'))
-        commission = list(self.client.get_documents('abstract', 'commission'))
-        markets = [v['market'] for v in commission]
-        self.symbols = [v['symbol'] for v in self.market]
-        # universe check
-        assert set(_universe) <= set(self.symbols), 'No data available!'
         # date type check
         try:
             _start_date = str2date(_start_date)
@@ -98,24 +36,24 @@ class Engine:
         except ValueError:
             raise Exception('Date type should be like Year-Month-Day!')
         # frequency check
-        assert _frequency in FREQUENCY, \
-            'Frequency should be one of {}!'.format(', '.join(FREQUENCY))
+        assert _frequency in FREQUENCY, 'Frequency should be one of {}!'.format(', '.join(FREQUENCY))
+        commission_collection = self.client.get_documents('abstract', 'commission')
+        commission_dict = {c['market']: c['commission'] for c in commission_collection}
 
         self.data_key = frequency2data_key(_frequency)
         portfolio = []
         for p in _portfolio_params:
             # params check
-            params = {'_starting_cash', '_ptype'}
-            assert set(p.keys()) == params, \
-                'Portfolio parameters should contain {}!'.format(', '.join(params))
+            assert set(PORTFOLIO_PARAMS) <= set(p.keys()), \
+                'Portfolio parameters should contain {}!'.format(', '.join(PORTFOLIO_PARAMS))
             starting_cash = p['_starting_cash']
-            ptype = p['_ptype']
+            ptype = p['_ptype'] if '_ptype' in p else 'stock_cn'  # defalut ptype is stock_cn
+            assert ptype in commission_dict, \
+                'Ptype should be one of {}!'.format(', '.join(list(commission_dict.keys())))
             # starting cash check
             assert type(starting_cash) in [float, int] and starting_cash > 0, \
                 'Starting cash should be a positive number!'
-            # ptype check
-            assert ptype in markets, 'Ptype should be one of {}!'.format(', '.join(markets))
-            commission = commission[markets.index(ptype)]['commission']
+            commission = commission_dict[ptype]
 
             portfolio.append(
                 Portfolio(
@@ -131,34 +69,43 @@ class Engine:
                     _commission=commission
                 )
             )
-
         self.context = Context(
             _portfolio=portfolio,
             _cur_time=None,
-            _universe=_universe,
             _start_date=_start_date,
             _end_date=_end_date,
             _frequency=_frequency
         )
-        self.data = self.preload_data()
-
-    def preload_data(self):
-        """
-        预加载universe数据
-        """
-        data = {}
-        for symbol in self.context.universe:
-            market = self.market[self.symbols.index(symbol)]['market']
-            collection_name = '{}|{}|{}'.format(symbol, market, self.data_key)
-            data[symbol] = list(self.client.get_documents('data', collection_name).sort('time'))
-        return data
+        market_collection = self.client.get_documents('abstract', 'market')
+        self.market_dict = {m['symbol']: m['market'] for m in market_collection}
 
     @staticmethod
     def make_id():
         return uuid.uuid4().hex
 
-    def update(self):
-        pass
+    def update(self, _time):
+        """
+        更新函数
+        :param _time: 当前时间
+        - Context.cur_time
+        - Position.price
+        - Position.value
+        - Portfolio.total_value
+        - Portfolio.total_return
+        - Portfolio.positions_value
+        """
+        self.context.cur_time = _time
+        for portfolio in self.context.portfolio:
+            positions_value = 0
+            for symbol, position in portfolio.long_positions.items():
+                position.price = self.data[symbol][_time]['close']
+                position.value = position.amount * position.price
+                positions_value += position.value
+            for position in portfolio.short_positions:
+                pass
+            portfolio.total_value = positions_value + portfolio.available_cash
+            portfolio.total_return = portfolio.total_value / portfolio.starting_cash - 1
+            portfolio.positions_value = positions_value
 
     def calc_commission(self):
         """
@@ -175,7 +122,8 @@ class Engine:
         :param _side: str, long or short
         :param _pindex: int, portfolio index
         """
-        assert isinstance(_symbol, str), 'Symbol should be a string!'
+        if _amount is None and _value is None:
+            raise Exception('Amount and value cannot be None at the same time!')
         if _amount is not None:
             assert type(_amount) in [float, int] and _amount >= 0, \
                 'Amount should be a positive number!'
@@ -191,11 +139,15 @@ class Engine:
         """
         self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side, _pindex=_pindex)
 
+        if _symbol not in self.data:
+            market = self.market_dict[_symbol]
+            collection_name = '{}|{}|{}'.format(_symbol, market, self.data_key)
+            collection = self.client.get_documents('data', collection_name)
+            self.data[_symbol] = {c['time']: c for c in collection}
+
+        # add a new order
         cur_time = self.context.cur_time
-        '''get price from db'''
-        cur_price = 10
-        '''calc commission from class method'''
-        commission = 5
+        cur_price = self.data[_symbol][cur_time]['close']
         new_order = Order(
             _add_time=cur_time,
             _symbol=_symbol,
@@ -203,13 +155,21 @@ class Engine:
             _avg_cost=cur_price,
             _side=_side,
             _action='open',
-            _commission=commission
+            _commission=self.context.portfolio[_pindex].commission['open']
         )
-        self.context.portfolio.orders[self.make_id()] = new_order
+        self.context.portfolio[_pindex].orders[self.make_id()] = new_order
 
-        if _side == 'long' and _symbol in self.context.portfolio.long_positions:
-            pass
-        elif _side == 'short' and _symbol in self.context.portfolio.short_positions:
+        # update position
+        if _side == 'long' and _symbol in self.context.portfolio[_pindex].long_positions:
+            position: Position = self.context.portfolio[_pindex].long_positions[_symbol]
+            acc_amount = _amount + position.amount
+            acc_value = _amount * cur_price + position.value
+            avg_cost = acc_value / acc_amount
+            # update position
+            position.avg_cost = avg_cost
+            position.amount = acc_amount
+            position.value = acc_value
+        elif _side == 'short' and _symbol in self.context.portfolio[_pindex].short_positions:
             pass
         else:
             new_position = Position(
@@ -218,13 +178,17 @@ class Engine:
                 _avg_cost=cur_price,
                 _init_time=cur_time,
                 _amount=_amount,
-                _value=cur_price * _amount,
+                _value=_amount * cur_price,
                 _side=_side
             )
             if _side == 'long':
-                self.context.portfolio.long_positions[_symbol] = new_position
+                self.context.portfolio[_pindex].long_positions[_symbol] = new_position
             else:
-                self.context.portfolio.short_positions[_symbol] = new_position
+                self.context.portfolio[_pindex].short_positions[_symbol] = new_position
+
+        # update portfolio
+        self.context.portfolio[_pindex].available_cash -= (_amount * cur_price)
+        self.context.portfolio[_pindex].positions_value += (_amount * cur_price)
 
     def order_target(self, _symbol, _amount, _side='long', _pindex=0):
         """
@@ -242,4 +206,16 @@ class Engine:
         """
 
     def run(self):
-        pass
+        trade_calendar = self.client.get_documents(
+            'abstract',
+            'trade_calendar',
+            {'date': {'$gte': self.context.start_date}}
+        )
+        a = 0
+        for row in trade_calendar:
+            t = row['date']
+            self.update(t)
+
+            if a == 0:
+                self.order('000001.XSHE', 100)
+                a = 1
