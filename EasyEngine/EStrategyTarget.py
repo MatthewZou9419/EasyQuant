@@ -60,9 +60,10 @@ class Context:
     策略信息类
     """
 
-    def __init__(self, _portfolio, _cur_time, _start_date, _end_date, _frequency):
+    def __init__(self, _portfolio, _cur_time, _start_date, _end_date, _frequency, _reference_symbol):
         self.portfolio = _portfolio  # 资产组合
         self.cur_time = _cur_time  # 当前时间
         self.start_date = _start_date  # 策略开始日期
         self.end_date = _end_date  # 策略结束日期
         self.frequency = _frequency  # 运行频率
+        self.reference_symbol = _reference_symbol  # 参考标的

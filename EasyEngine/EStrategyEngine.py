@@ -20,12 +20,13 @@ class Engine:
     client = MongoClient()
     data = {}
 
-    def __init__(self, _start_date, _end_date, _frequency, _portfolio_params):
+    def __init__(self, _start_date, _end_date, _frequency, _portfolio_params, _reference_symbol='000001.XSHE'):
         """
         :param _start_date: 回测开始日期
         :param _end_date: 回测结束日期
         :param _frequency: 回测频率
         :param _portfolio_params: portfolio参数
+        :param _reference_symbol: 参考标的
         """
         if not isinstance(_portfolio_params, list):
             _portfolio_params = [_portfolio_params]
@@ -47,7 +48,7 @@ class Engine:
             assert set(PORTFOLIO_PARAMS) <= set(p.keys()), \
                 'Portfolio parameters should contain {}!'.format(', '.join(PORTFOLIO_PARAMS))
             starting_cash = p['_starting_cash']
-            ptype = p['_ptype'] if '_ptype' in p else 'stock_cn'  # defalut ptype is stock_cn
+            ptype = p['_ptype'] if '_ptype' in p else 'stock_cn'  # defalut ptype
             assert ptype in commission_dict, \
                 'Ptype should be one of {}!'.format(', '.join(list(commission_dict.keys())))
             # starting cash check
@@ -74,10 +75,17 @@ class Engine:
             _cur_time=None,
             _start_date=_start_date,
             _end_date=_end_date,
-            _frequency=_frequency
+            _frequency=_frequency,
+            _reference_symbol=_reference_symbol
         )
         market_collection = self.client.get_documents('abstract', 'market')
         self.market_dict = {m['symbol']: m['market'] for m in market_collection}
+
+    def get_reference(self):
+        market = self.market_dict[self.context.reference_symbol]
+        collection_name = '{}|{}|{}'.format(self.context.reference_symbol, market, self.data_key)
+        query = {'time': {'$gte': self.context.start_date, '$lte': self.context.end_date}}
+        return self.client.get_documents('data', collection_name, query).sort('time')
 
     @staticmethod
     def make_id():
@@ -142,12 +150,19 @@ class Engine:
         if _symbol not in self.data:
             market = self.market_dict[_symbol]
             collection_name = '{}|{}|{}'.format(_symbol, market, self.data_key)
-            collection = self.client.get_documents('data', collection_name)
+            query = {'time': {'$gte': self.context.start_date, '$lte': self.context.end_date}}
+            collection = self.client.get_documents('data', collection_name, query)
             self.data[_symbol] = {c['time']: c for c in collection}
 
-        # add a new order
+        # value check
         cur_time = self.context.cur_time
         cur_price = self.data[_symbol][cur_time]['close']
+        value = _amount * cur_price
+        portfolio: Portfolio = self.context.portfolio[_pindex]
+        if value > portfolio.available_cash:
+            print('Not enough cash, adjusted to all cash!')
+            value = portfolio.available_cash
+        # add a new order
         new_order = Order(
             _add_time=cur_time,
             _symbol=_symbol,
@@ -160,16 +175,16 @@ class Engine:
         self.context.portfolio[_pindex].orders[self.make_id()] = new_order
 
         # update position
-        if _side == 'long' and _symbol in self.context.portfolio[_pindex].long_positions:
-            position: Position = self.context.portfolio[_pindex].long_positions[_symbol]
+        if _side == 'long' and _symbol in portfolio.long_positions:
+            position: Position = portfolio.long_positions[_symbol]
             acc_amount = _amount + position.amount
-            acc_value = _amount * cur_price + position.value
+            acc_value = value + position.value
             avg_cost = acc_value / acc_amount
             # update position
             position.avg_cost = avg_cost
             position.amount = acc_amount
             position.value = acc_value
-        elif _side == 'short' and _symbol in self.context.portfolio[_pindex].short_positions:
+        elif _side == 'short' and _symbol in portfolio.short_positions:
             pass
         else:
             new_position = Position(
@@ -178,22 +193,78 @@ class Engine:
                 _avg_cost=cur_price,
                 _init_time=cur_time,
                 _amount=_amount,
-                _value=_amount * cur_price,
+                _value=value,
                 _side=_side
             )
             if _side == 'long':
-                self.context.portfolio[_pindex].long_positions[_symbol] = new_position
+                portfolio.long_positions[_symbol] = new_position
             else:
-                self.context.portfolio[_pindex].short_positions[_symbol] = new_position
+                portfolio.short_positions[_symbol] = new_position
 
         # update portfolio
-        self.context.portfolio[_pindex].available_cash -= (_amount * cur_price)
-        self.context.portfolio[_pindex].positions_value += (_amount * cur_price)
+        portfolio.available_cash -= value
+        portfolio.positions_value += value
 
     def order_target(self, _symbol, _amount, _side='long', _pindex=0):
         """
         按目标数量下单
         """
+        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side, _pindex=_pindex)
+
+        cur_time = self.context.cur_time
+        cur_price = self.data[_symbol][cur_time]['close']
+        portfolio: Portfolio = self.context.portfolio[_pindex]
+        if _symbol in portfolio.long_positions and portfolio.long_positions[_symbol].amount > _amount:
+            action = 'close'
+        else:
+            action = 'open'
+            # value check
+            value = _amount * cur_price
+            if value > portfolio.available_cash:
+                print('Not enough cash, adjusted to all cash!')
+                value = portfolio.available_cash
+        # add a new order
+        new_order = Order(
+            _add_time=cur_time,
+            _symbol=_symbol,
+            _amount=_amount,
+            _avg_cost=cur_price,
+            _side=_side,
+            _action=action,
+            _commission=self.context.portfolio[_pindex].commission[action]
+        )
+        self.context.portfolio[_pindex].orders[self.make_id()] = new_order
+
+        # update position
+        if _side == 'long' and _symbol in portfolio.long_positions:
+            position: Position = portfolio.long_positions[_symbol]
+            acc_amount = _amount + position.amount
+            acc_value = value + position.value
+            avg_cost = acc_value / acc_amount
+            # update position
+            position.avg_cost = avg_cost
+            position.amount = acc_amount
+            position.value = acc_value
+        elif _side == 'short' and _symbol in portfolio.short_positions:
+            pass
+        else:
+            new_position = Position(
+                _symbol=_symbol,
+                _price=cur_price,
+                _avg_cost=cur_price,
+                _init_time=cur_time,
+                _amount=_amount,
+                _value=value,
+                _side=_side
+            )
+            if _side == 'long':
+                portfolio.long_positions[_symbol] = new_position
+            else:
+                portfolio.short_positions[_symbol] = new_position
+
+        # update portfolio
+        portfolio.available_cash -= value
+        portfolio.positions_value += value
 
     def order_value(self, _symbol, _value, _side='long', _pindex=0):
         """
@@ -204,18 +275,3 @@ class Engine:
         """
         按目标价值下单
         """
-
-    def run(self):
-        trade_calendar = self.client.get_documents(
-            'abstract',
-            'trade_calendar',
-            {'date': {'$gte': self.context.start_date}}
-        )
-        a = 0
-        for row in trade_calendar:
-            t = row['date']
-            self.update(t)
-
-            if a == 0:
-                self.order('000001.XSHE', 100)
-                a = 1
