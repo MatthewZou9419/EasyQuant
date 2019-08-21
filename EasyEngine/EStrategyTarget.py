@@ -25,6 +25,11 @@ class Position:
     持仓标的类
     """
     def __init__(self, _symbol, _price, _avg_cost, _init_time, _amount, _side):
+        """
+        :param _price: bar级别更新
+        :param _avg_cost: 开平仓更新
+        :param _amount: 开平仓更新
+        """
         self.symbol = _symbol  # 标的
         self.price = _price  # 最新价
         self.avg_cost = _avg_cost  # 平均成本
@@ -43,6 +48,9 @@ class Portfolio:
     """
     def __init__(self, _available_cash, _long_positions, _short_positions, _orders, _starting_cash, _ptype, 
                  _commission):
+        """
+        :param _available_cash: 开平仓更新
+        """
         self.available_cash = _available_cash  # 可用资金
         self.long_positions = _long_positions  # 多仓
         self.short_positions = _short_positions  # 空仓
@@ -53,8 +61,7 @@ class Portfolio:
 
     @property
     def positions_value(self):  # 仓位价值
-        return sum(p.value for p in self.long_positions) + \
-               sum(p.value for p in self.short_positions)
+        return sum(p.value for p in self.long_positions.values()) + sum(p.value for p in self.short_positions.values())
     
     @property
     def total_value(self):  # 总价值

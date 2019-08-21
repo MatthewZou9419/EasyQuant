@@ -4,6 +4,8 @@ Created on 2019/8/7 21:16
 @file: EStrategyEngine.py
 @author: Matt
 """
+import pandas as pd
+import numpy as np
 import uuid
 
 from EasyEngine.EStrategyTarget import Order, Position, Portfolio, Context
@@ -39,10 +41,10 @@ class Engine:
             raise Exception('Date type should be like Year-Month-Day!')
         # frequency check
         assert _frequency in FREQUENCY, 'Frequency should be one of {}!'.format(', '.join(FREQUENCY))
+        self.data_key = frequency2data_key(_frequency)
         commission_collection = self.client.get_documents('abstract', 'commission')
         commission_dict = {c['market']: c['commission'] for c in commission_collection}
 
-        self.data_key = frequency2data_key(_frequency)
         portfolio = []
         for p in _portfolio_params:
             # params check
@@ -63,17 +65,14 @@ class Engine:
                     _long_positions={},
                     _short_positions={},
                     _orders={},
-                    _total_value=starting_cash,
-                    _total_return=0,
                     _starting_cash=starting_cash,
-                    _positions_value=0,
                     _ptype=ptype,
                     _commission=commission
                 )
             )
         self.context = Context(
             _portfolio=portfolio,
-            _cur_time=None,
+            _cur_time=_start_date,
             _start_date=_start_date,
             _end_date=_end_date,
             _frequency=_frequency,
@@ -93,14 +92,14 @@ class Engine:
         return uuid.uuid4().hex
 
     def get_position_pct(self):
-        total_positions_value = total_value = 0
-        for portfolio in self.context.portfolio:
-            for position in portfolio.long_positions.values():
-                total_positions_value += position.value
-            for position in portfolio.short_positions:
-                pass
-            total_value += portfolio.total_value
-        return total_positions_value / total_value
+        """
+        仓位占比
+        """
+        if len(self.context.portfolio) == 1:
+            portfolio: Portfolio = self.context.portfolio[0]
+            return portfolio.positions_value / portfolio.total_value
+        else:
+            pass
 
     def update(self, _time):
         """
@@ -108,104 +107,103 @@ class Engine:
         :param _time: 当前时间
         - Context.cur_time
         - Position.price
-        - Position.value
-        - Portfolio.total_value
-        - Portfolio.total_return
-        - Portfolio.positions_value
         """
         self.context.cur_time = _time
         for portfolio in self.context.portfolio:
-            positions_value = 0
             for symbol, position in portfolio.long_positions.items():
                 position.price = self.data[symbol][_time]['close']
-                position.value = position.amount * position.price
-                positions_value += position.value
-            for position in portfolio.short_positions:
-                pass
-            portfolio.total_value = positions_value + portfolio.available_cash
-            portfolio.total_return = portfolio.total_value / portfolio.starting_cash - 1
-            portfolio.positions_value = positions_value
+            for symbol, position in portfolio.short_positions.items():
+                position.price = self.data[symbol][_time]['close']
 
         perf = {
             'time': _time,
-            'total_return': sum(p.total_return * p.total_value for p in self.context.portfolio) /
-                            sum(p.total_value for p in self.context.portfolio),
+            'total_return': self.context.portfolio[0].total_return,
             'position_pct': self.get_position_pct()
         }
         self.performance.append(perf)
 
-    def calc_commission(self):
+    def get_performance(self):
+        performance_df = pd.DataFrame(self.performance)
+        performance_df.index = performance_df['time']
+        del performance_df['time']
+        benchmark = np.array([r['close'] for r in self.get_reference()])
+        benchmark = benchmark / benchmark[0] - 1
+        performance_df['benchmark'] = benchmark
+        return performance_df
+
+    def calc_commission(self, _value, _pindex, _action):
         """
         计算手续费
         """
-        pass
+        portfolio = self.context.portfolio[_pindex]
+        commission = portfolio.commission
+        if portfolio.ptype == 'stock_cn':
+            return max(commission[_action] * _value, commission['min'])
+        return commission[_action] * _value
 
-    def open(self, _symbol, _amount, _side='long', _pindex=0):
+    def open(self, _symbol, _amount, _side, _pindex):
         """
         开仓函数
         """
+        amount, avg_cost, commission = self.calc_open_params(_symbol, _amount, _side, _pindex)
         cur_time = self.context.cur_time
-        cur_price = self.data[_symbol][cur_time]['close']
-        value = _amount * cur_price
+        value = amount * avg_cost
         # add a new order
         new_order = Order(
             _add_time=cur_time,
             _symbol=_symbol,
-            _amount=_amount,
-            _avg_cost=cur_price,
+            _amount=amount,
+            _avg_cost=avg_cost,  # assume instantly traded
             _side=_side,
             _action='open',
-            _commission=0
+            _commission=commission
         )
         portfolio: Portfolio = self.context.portfolio[_pindex]
         portfolio.orders[self.make_id()] = new_order
         # update position
         if _side == 'long' and _symbol in portfolio.long_positions:
             position: Position = portfolio.long_positions[_symbol]
-            position.amount += _amount
-            position.value += value
+            position.amount += amount
             position.avg_cost = position.value / position.amount
-            # update portfolio
             portfolio.available_cash -= value
-            portfolio.positions_value += value
         elif _side == 'short' and _symbol in portfolio.short_positions:
             pass
         # add a new position
         else:
+            cur_price = self.data[_symbol][cur_time]['close']
             new_position = Position(
                 _symbol=_symbol,
                 _price=cur_price,
-                _avg_cost=cur_price,
+                _avg_cost=avg_cost,
                 _init_time=cur_time,
-                _amount=_amount,
-                _value=value,
+                _amount=amount,
                 _side=_side
             )
             if _side == 'long':
                 portfolio.long_positions[_symbol] = new_position
-                # update portfolio
                 portfolio.available_cash -= value
-                portfolio.positions_value += value
             else:
-                portfolio.short_positions[_symbol] = new_position
-        print('{}: {} open {}'.format(cur_time, _side, _symbol))
+                pass
+        print('time: {}, symbol: {}, action: open, side: {}, amount: {}, avg_cost: {}, commission: {}'.
+              format(cur_time, _symbol, _side, amount, avg_cost, commission))
+        return new_order
 
-    def close(self, _symbol, _amount, _side='long', _pindex=0):
+    def close(self, _symbol, _amount, _side, _pindex):
         """
         平仓函数
         """
+        amount, avg_cost, commission = self.calc_close_params(_symbol, _amount, _side, _pindex)
         cur_time = self.context.cur_time
-        cur_price = self.data[_symbol][cur_time]['close']
-        value = _amount * cur_price
+        value = amount * avg_cost
         # add a new order
         new_order = Order(
             _add_time=cur_time,
             _symbol=_symbol,
-            _amount=_amount,
-            _avg_cost=cur_price,
+            _amount=amount,
+            _avg_cost=avg_cost,
             _side=_side,
             _action='close',
-            _commission=0
+            _commission=commission
         )
         portfolio: Portfolio = self.context.portfolio[_pindex]
         portfolio.orders[self.make_id()] = new_order
@@ -213,41 +211,40 @@ class Engine:
         if _side == 'long':
             position: Position = portfolio.long_positions[_symbol]
             # close partially
-            if _amount < position.amount:
-                position.amount -= _amount
-                position.value -= value
+            if amount < position.amount:
+                position.amount -= amount
                 position.avg_cost = position.value / position.amount
             # close all
             else:
                 portfolio.long_positions.pop(_symbol)
             # update portfolio
             portfolio.available_cash += value
-            portfolio.positions_value -= value
         elif _side == 'short':
             pass
-        print('{}: {} close {}'.format(cur_time, _side, _symbol))
+        print('time: {}, symbol: {}, action: close, side: {}, amount: {}, avg_cost: {}, commission: {}'.
+              format(cur_time, _symbol, _side, amount, avg_cost, commission))
+        return new_order
 
     def order_check(self, _symbol, _amount, _side, _pindex):
         """
-        下单函数参数检查
+        下单参数检查
         :param _symbol: str
         :param _amount: int or float >= 0
         :param _side: str, long or short
         :param _pindex: int, portfolio index
         """
         assert _symbol in self.market_dict, 'Symbol not found!'
-        assert type(_amount) in [float, int] and _amount >= 0, \
+        assert type(_amount) is int and _amount >= 0, \
             'Amount should be a positive number!'
         assert _side in ['long', 'short'], 'Side should be either long or short!'
         assert _pindex in range(len(self.context.portfolio)), 'Pindex out of range!'
 
-    def order(self, _symbol, _amount, _side='long', _pindex=0):
+    def calc_open_params(self, _symbol, _amount, _side, _pindex):
         """
-        按数量下单
+        计算开仓参数
         """
-        self.order_check(_symbol, _amount, _side, _pindex)
-
         if _amount == 0:
+            print('0 open amount!')
             return
 
         if _symbol not in self.data:
@@ -260,13 +257,57 @@ class Engine:
         # value check
         cur_time = self.context.cur_time
         cur_price = self.data[_symbol][cur_time]['close']
-        value = _amount * cur_price
         portfolio: Portfolio = self.context.portfolio[_pindex]
-        if value > portfolio.available_cash:
+        unit = portfolio.commission['unit']
+        _amount *= unit
+        value = _amount * cur_price
+        commission = self.calc_commission(value, _pindex, 'open')
+        avg_cost = (value + commission) / _amount
+        if value + commission > portfolio.available_cash:
             print('Not enough cash, adjusted to all cash!')
-            _amount = portfolio.available_cash / cur_price
+            _amount = int((portfolio.available_cash / cur_price) / unit) * unit
+            if _amount == 0:
+                print('0 open amount!')
+                return
+            value = _amount * cur_price
+            commission = self.calc_commission(value, _pindex, 'open')
+            avg_cost = (value + commission) / _amount
 
-        self.open(_symbol, _amount, _side, _pindex)
+        return _amount, avg_cost, commission
+
+    def calc_close_params(self, _symbol, _amount, _side, _pindex):
+        """
+        计算平仓参数
+        """
+        if _amount == 0:
+            print('0 close amount!')
+            return
+
+        # value check
+        cur_time = self.context.cur_time
+        cur_price = self.data[_symbol][cur_time]['close']
+        portfolio: Portfolio = self.context.portfolio[_pindex]
+        unit = portfolio.commission['unit']
+        _amount *= unit
+        value = _amount * cur_price
+        commission = self.calc_commission(value, _pindex, 'close')
+        avg_cost = (value - commission) / _amount
+        position: Position = portfolio.long_positions[_symbol] if _side == 'long' else portfolio.short_positions[_symbol]
+        if _amount > position.amount:
+            print('Not enough amount, adjusted to all amount!')
+            _amount = position.amount
+            value = _amount * cur_price
+            commission = self.calc_commission(value, _pindex, 'open')
+            avg_cost = (value - commission) / _amount
+            
+        return _amount, avg_cost, commission
+
+    def order(self, _symbol, _amount, _side='long', _pindex=0):
+        """
+        按数量下单
+        """
+        self.order_check(_symbol, _amount, _side, _pindex)
+        return self.open(_symbol, _amount, _side, _pindex)
 
     def order_target(self, _symbol, _amount, _side='long', _pindex=0):
         """
@@ -275,12 +316,21 @@ class Engine:
         self.order_check(_symbol, _amount, _side, _pindex)
 
         portfolio: Portfolio = self.context.portfolio[_pindex]
-        if _symbol in portfolio.long_positions:
-            position: Position = portfolio.long_positions[_symbol]
-            if _amount > position.amount:
-                self.open(_symbol, _amount - position.amount, _side, _pindex)
-            elif _amount < position.amount:
-                self.close(_symbol, position.amount - _amount, _side, _pindex)
+        unit = portfolio.commission['unit']
+        if _side == 'long':
+            if _symbol in portfolio.long_positions:
+                position: Position = portfolio.long_positions[_symbol]
+                if _amount > position.amount:
+                    return self.open(_symbol, _amount - position.amount / unit, _side, _pindex)
+                elif _amount < position.amount:
+                    return self.close(_symbol, position.amount / unit - _amount, _side, _pindex)
+                else:
+                    print('0 close amount!')
+                    return
+            else:
+                print('No match position!')
+        else:
+            pass
 
     def order_value(self, _symbol, _value, _side='long', _pindex=0):
         """

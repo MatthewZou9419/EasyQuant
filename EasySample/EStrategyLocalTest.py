@@ -6,19 +6,16 @@ Created on 2019/8/8 上午11:51
 """
 from collections import deque
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-from tqdm import tqdm
 
 from EasyEngine.EStrategyEngine import Engine
 from EasyUtil.EMongoUtil import MongoClient
+from EasyUtil.EPlotUtil import plot_performance
 
 client = MongoClient()
 
 # --------------------------初始化参数设定--------------------------
-start_date = '2019-1-1'
-end_date = '2019-8-20'
+start_date = '2014-1-1'
+end_date = '2016-1-1'
 frequency = 'day'
 portfolio_params = {
     '_starting_cash': 1000000,
@@ -51,8 +48,4 @@ for bar in reference:
     elif e.context.portfolio[0].positions_value > 0 and np.mean(list(q)[-w1:]) < np.mean(q):
         e.order_target(code, 0)
 
-performance_df = pd.DataFrame(e.performance)
-performance_df.index = performance_df['time']
-del performance_df['time']
-performance_df.plot(secondary_y='position_pct')
-plt.show()
+plot_performance(e.get_performance())
