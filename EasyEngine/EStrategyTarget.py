@@ -10,14 +10,19 @@ class Order:
     """
     订单类
     """
-    def __init__(self, _add_time, _symbol, _amount, _avg_cost, _side, _action, _commission):
+    def __init__(self, _add_time, _symbol, _amount, _avg_cost, _profit, _side, _action, _commission):
         self.add_time = _add_time  # 时间
         self.symbol = _symbol  # 标的
         self.amount = _amount  # 数量
         self.avg_cost = _avg_cost  # 平均成本
+        self.profit = _profit  # 利润
         self.side = _side  # 多空方向
         self.action = _action  # 开平方向
         self.commission = _commission  # 手续费
+        
+    @property
+    def value(self):  # 价值
+        return self.avg_cost * self.amount
 
 
 class Position:

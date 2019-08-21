@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on 2019/8/21 下午4:16 
-@file: EPlotUtil.py
+@file: EReportingUtil.py
 @author: ZouHao
 """
 import matplotlib.pyplot as plt

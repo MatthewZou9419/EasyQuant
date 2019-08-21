@@ -122,14 +122,29 @@ class Engine:
         }
         self.performance.append(perf)
 
-    def get_performance(self):
+    def get_report(self):
+        # performance
         performance_df = pd.DataFrame(self.performance)
         performance_df.index = performance_df['time']
         del performance_df['time']
         benchmark = np.array([r['close'] for r in self.get_reference()])
         benchmark = benchmark / benchmark[0] - 1
         performance_df['benchmark'] = benchmark
-        return performance_df
+        # order
+        o: Order
+        orders = [{
+            'add_time': o.add_time,
+            'symbol': o.symbol,
+            'amount': o.amount,
+            'avg_cost': o.avg_cost,
+            'profit': o.profit,
+            'side': o.side,
+            'action': o.action,
+            'commission': o.commission,
+            'value': o.value
+        } for o in self.context.portfolio[0].orders.values()]
+        order_df = pd.DataFrame(orders).sort_values('add_time')
+        return performance_df, order_df
 
     def calc_commission(self, _value, _pindex, _action):
         """
@@ -138,8 +153,8 @@ class Engine:
         portfolio = self.context.portfolio[_pindex]
         commission = portfolio.commission
         if portfolio.ptype == 'stock_cn':
-            return max(commission[_action] * _value, commission['min'])
-        return commission[_action] * _value
+            return max(round(commission[_action] * _value, 2), commission['min'])
+        return round(commission[_action] * _value, 2)
 
     def open(self, _symbol, _amount, _side, _pindex):
         """
@@ -154,6 +169,7 @@ class Engine:
             _symbol=_symbol,
             _amount=amount,
             _avg_cost=avg_cost,  # assume instantly traded
+            _profit=0,
             _side=_side,
             _action='open',
             _commission=commission
@@ -195,18 +211,7 @@ class Engine:
         amount, avg_cost, commission = self.calc_close_params(_symbol, _amount, _side, _pindex)
         cur_time = self.context.cur_time
         value = amount * avg_cost
-        # add a new order
-        new_order = Order(
-            _add_time=cur_time,
-            _symbol=_symbol,
-            _amount=amount,
-            _avg_cost=avg_cost,
-            _side=_side,
-            _action='close',
-            _commission=commission
-        )
         portfolio: Portfolio = self.context.portfolio[_pindex]
-        portfolio.orders[self.make_id()] = new_order
         # update position
         if _side == 'long':
             position: Position = portfolio.long_positions[_symbol]
@@ -219,8 +224,21 @@ class Engine:
                 portfolio.long_positions.pop(_symbol)
             # update portfolio
             portfolio.available_cash += value
+            profit = value - position.avg_cost * amount
         elif _side == 'short':
             pass
+        # add a new order
+        new_order = Order(
+            _add_time=cur_time,
+            _symbol=_symbol,
+            _amount=amount,
+            _avg_cost=avg_cost,
+            _profit=profit,
+            _side = _side,
+            _action = 'close',
+            _commission = commission
+        )
+        portfolio.orders[self.make_id()] = new_order
         print('time: {}, symbol: {}, action: close, side: {}, amount: {}, avg_cost: {}, commission: {}'.
               format(cur_time, _symbol, _side, amount, avg_cost, commission))
         return new_order
@@ -273,7 +291,7 @@ class Engine:
             commission = self.calc_commission(value, _pindex, 'open')
             avg_cost = (value + commission) / _amount
 
-        return _amount, avg_cost, commission
+        return _amount, round(avg_cost, 2), commission
 
     def calc_close_params(self, _symbol, _amount, _side, _pindex):
         """
@@ -300,7 +318,7 @@ class Engine:
             commission = self.calc_commission(value, _pindex, 'open')
             avg_cost = (value - commission) / _amount
             
-        return _amount, avg_cost, commission
+        return _amount, round(avg_cost, 2), commission
 
     def order(self, _symbol, _amount, _side='long', _pindex=0):
         """

@@ -9,7 +9,7 @@ import numpy as np
 
 from EasyEngine.EStrategyEngine import Engine
 from EasyUtil.EMongoUtil import MongoClient
-from EasyUtil.EPlotUtil import plot_performance
+from EasyUtil.EReportingUtil import plot_performance
 
 client = MongoClient()
 
@@ -48,4 +48,6 @@ for bar in reference:
     elif e.context.portfolio[0].positions_value > 0 and np.mean(list(q)[-w1:]) < np.mean(q):
         e.order_target(code, 0)
 
-plot_performance(e.get_performance())
+performance_df, order_df = e.get_report()
+plot_performance(performance_df)
+print('finished')
