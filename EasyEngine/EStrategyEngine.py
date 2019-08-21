@@ -19,6 +19,7 @@ class Engine:
     """
     client = MongoClient()
     data = {}
+    performance = []
 
     def __init__(self, _start_date, _end_date, _frequency, _portfolio_params, _reference_symbol='000001.XSHE'):
         """
@@ -91,6 +92,16 @@ class Engine:
     def make_id():
         return uuid.uuid4().hex
 
+    def get_position_pct(self):
+        total_positions_value = total_value = 0
+        for portfolio in self.context.portfolio:
+            for position in portfolio.long_positions.values():
+                total_positions_value += position.value
+            for position in portfolio.short_positions:
+                pass
+            total_value += portfolio.total_value
+        return total_positions_value / total_value
+
     def update(self, _time):
         """
         更新函数
@@ -115,29 +126,118 @@ class Engine:
             portfolio.total_return = portfolio.total_value / portfolio.starting_cash - 1
             portfolio.positions_value = positions_value
 
+        perf = {
+            'time': _time,
+            'total_return': sum(p.total_return * p.total_value for p in self.context.portfolio) /
+                            sum(p.total_value for p in self.context.portfolio),
+            'position_pct': self.get_position_pct()
+        }
+        self.performance.append(perf)
+
     def calc_commission(self):
         """
         计算手续费
         """
         pass
 
-    def order_check(self, _symbol, _amount, _value, _side, _pindex):
+    def open(self, _symbol, _amount, _side='long', _pindex=0):
+        """
+        开仓函数
+        """
+        cur_time = self.context.cur_time
+        cur_price = self.data[_symbol][cur_time]['close']
+        value = _amount * cur_price
+        # add a new order
+        new_order = Order(
+            _add_time=cur_time,
+            _symbol=_symbol,
+            _amount=_amount,
+            _avg_cost=cur_price,
+            _side=_side,
+            _action='open',
+            _commission=0
+        )
+        portfolio: Portfolio = self.context.portfolio[_pindex]
+        portfolio.orders[self.make_id()] = new_order
+        # update position
+        if _side == 'long' and _symbol in portfolio.long_positions:
+            position: Position = portfolio.long_positions[_symbol]
+            position.amount += _amount
+            position.value += value
+            position.avg_cost = position.value / position.amount
+            # update portfolio
+            portfolio.available_cash -= value
+            portfolio.positions_value += value
+        elif _side == 'short' and _symbol in portfolio.short_positions:
+            pass
+        # add a new position
+        else:
+            new_position = Position(
+                _symbol=_symbol,
+                _price=cur_price,
+                _avg_cost=cur_price,
+                _init_time=cur_time,
+                _amount=_amount,
+                _value=value,
+                _side=_side
+            )
+            if _side == 'long':
+                portfolio.long_positions[_symbol] = new_position
+                # update portfolio
+                portfolio.available_cash -= value
+                portfolio.positions_value += value
+            else:
+                portfolio.short_positions[_symbol] = new_position
+        print('{}: {} open {}'.format(cur_time, _side, _symbol))
+
+    def close(self, _symbol, _amount, _side='long', _pindex=0):
+        """
+        平仓函数
+        """
+        cur_time = self.context.cur_time
+        cur_price = self.data[_symbol][cur_time]['close']
+        value = _amount * cur_price
+        # add a new order
+        new_order = Order(
+            _add_time=cur_time,
+            _symbol=_symbol,
+            _amount=_amount,
+            _avg_cost=cur_price,
+            _side=_side,
+            _action='close',
+            _commission=0
+        )
+        portfolio: Portfolio = self.context.portfolio[_pindex]
+        portfolio.orders[self.make_id()] = new_order
+        # update position
+        if _side == 'long':
+            position: Position = portfolio.long_positions[_symbol]
+            # close partially
+            if _amount < position.amount:
+                position.amount -= _amount
+                position.value -= value
+                position.avg_cost = position.value / position.amount
+            # close all
+            else:
+                portfolio.long_positions.pop(_symbol)
+            # update portfolio
+            portfolio.available_cash += value
+            portfolio.positions_value -= value
+        elif _side == 'short':
+            pass
+        print('{}: {} close {}'.format(cur_time, _side, _symbol))
+
+    def order_check(self, _symbol, _amount, _side, _pindex):
         """
         下单函数参数检查
         :param _symbol: str
         :param _amount: int or float >= 0
-        :param _value: int or float >= 0
         :param _side: str, long or short
         :param _pindex: int, portfolio index
         """
-        if _amount is None and _value is None:
-            raise Exception('Amount and value cannot be None at the same time!')
-        if _amount is not None:
-            assert type(_amount) in [float, int] and _amount >= 0, \
-                'Amount should be a positive number!'
-        if _value is not None:
-            assert type(_value) in [float, int] and _value >= 0, \
-                'Value should be a positive number!'
+        assert _symbol in self.market_dict, 'Symbol not found!'
+        assert type(_amount) in [float, int] and _amount >= 0, \
+            'Amount should be a positive number!'
         assert _side in ['long', 'short'], 'Side should be either long or short!'
         assert _pindex in range(len(self.context.portfolio)), 'Pindex out of range!'
 
@@ -145,7 +245,10 @@ class Engine:
         """
         按数量下单
         """
-        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side, _pindex=_pindex)
+        self.order_check(_symbol, _amount, _side, _pindex)
+
+        if _amount == 0:
+            return
 
         if _symbol not in self.data:
             market = self.market_dict[_symbol]
@@ -161,110 +264,23 @@ class Engine:
         portfolio: Portfolio = self.context.portfolio[_pindex]
         if value > portfolio.available_cash:
             print('Not enough cash, adjusted to all cash!')
-            value = portfolio.available_cash
-        # add a new order
-        new_order = Order(
-            _add_time=cur_time,
-            _symbol=_symbol,
-            _amount=_amount,
-            _avg_cost=cur_price,
-            _side=_side,
-            _action='open',
-            _commission=self.context.portfolio[_pindex].commission['open']
-        )
-        self.context.portfolio[_pindex].orders[self.make_id()] = new_order
+            _amount = portfolio.available_cash / cur_price
 
-        # update position
-        if _side == 'long' and _symbol in portfolio.long_positions:
-            position: Position = portfolio.long_positions[_symbol]
-            acc_amount = _amount + position.amount
-            acc_value = value + position.value
-            avg_cost = acc_value / acc_amount
-            # update position
-            position.avg_cost = avg_cost
-            position.amount = acc_amount
-            position.value = acc_value
-        elif _side == 'short' and _symbol in portfolio.short_positions:
-            pass
-        else:
-            new_position = Position(
-                _symbol=_symbol,
-                _price=cur_price,
-                _avg_cost=cur_price,
-                _init_time=cur_time,
-                _amount=_amount,
-                _value=value,
-                _side=_side
-            )
-            if _side == 'long':
-                portfolio.long_positions[_symbol] = new_position
-            else:
-                portfolio.short_positions[_symbol] = new_position
-
-        # update portfolio
-        portfolio.available_cash -= value
-        portfolio.positions_value += value
+        self.open(_symbol, _amount, _side, _pindex)
 
     def order_target(self, _symbol, _amount, _side='long', _pindex=0):
         """
         按目标数量下单
         """
-        self.order_check(_symbol=_symbol, _amount=_amount, _value=None, _side=_side, _pindex=_pindex)
+        self.order_check(_symbol, _amount, _side, _pindex)
 
-        cur_time = self.context.cur_time
-        cur_price = self.data[_symbol][cur_time]['close']
         portfolio: Portfolio = self.context.portfolio[_pindex]
-        if _symbol in portfolio.long_positions and portfolio.long_positions[_symbol].amount > _amount:
-            action = 'close'
-        else:
-            action = 'open'
-            # value check
-            value = _amount * cur_price
-            if value > portfolio.available_cash:
-                print('Not enough cash, adjusted to all cash!')
-                value = portfolio.available_cash
-        # add a new order
-        new_order = Order(
-            _add_time=cur_time,
-            _symbol=_symbol,
-            _amount=_amount,
-            _avg_cost=cur_price,
-            _side=_side,
-            _action=action,
-            _commission=self.context.portfolio[_pindex].commission[action]
-        )
-        self.context.portfolio[_pindex].orders[self.make_id()] = new_order
-
-        # update position
-        if _side == 'long' and _symbol in portfolio.long_positions:
+        if _symbol in portfolio.long_positions:
             position: Position = portfolio.long_positions[_symbol]
-            acc_amount = _amount + position.amount
-            acc_value = value + position.value
-            avg_cost = acc_value / acc_amount
-            # update position
-            position.avg_cost = avg_cost
-            position.amount = acc_amount
-            position.value = acc_value
-        elif _side == 'short' and _symbol in portfolio.short_positions:
-            pass
-        else:
-            new_position = Position(
-                _symbol=_symbol,
-                _price=cur_price,
-                _avg_cost=cur_price,
-                _init_time=cur_time,
-                _amount=_amount,
-                _value=value,
-                _side=_side
-            )
-            if _side == 'long':
-                portfolio.long_positions[_symbol] = new_position
-            else:
-                portfolio.short_positions[_symbol] = new_position
-
-        # update portfolio
-        portfolio.available_cash -= value
-        portfolio.positions_value += value
+            if _amount > position.amount:
+                self.open(_symbol, _amount - position.amount, _side, _pindex)
+            elif _amount < position.amount:
+                self.close(_symbol, position.amount - _amount, _side, _pindex)
 
     def order_value(self, _symbol, _value, _side='long', _pindex=0):
         """
