@@ -91,16 +91,6 @@ class Engine:
     def make_id():
         return uuid.uuid4().hex
 
-    def get_position_pct(self):
-        """
-        仓位占比
-        """
-        if len(self.context.portfolio) == 1:
-            portfolio: Portfolio = self.context.portfolio[0]
-            return portfolio.positions_value / portfolio.total_value
-        else:
-            pass
-
     def update(self, _time):
         """
         更新函数
@@ -117,9 +107,13 @@ class Engine:
 
         perf = {
             'time': _time,
-            'total_return': self.context.portfolio[0].total_return,
-            'position_pct': self.get_position_pct()
+            'total_return': self.context.portfolio[0].total_return
         }
+        perf.update({
+            'position_pct{}'.format(i):
+                self.context.portfolio[i].positions_value / self.context.portfolio[i].total_value
+            for i in range(len(self.context.portfolio))
+        })
         self.performance.append(perf)
 
     def get_report(self):
@@ -130,6 +124,8 @@ class Engine:
         benchmark = np.array([r['close'] for r in self.get_reference()])
         benchmark = benchmark / benchmark[0] - 1
         performance_df['benchmark'] = benchmark
+        net_value = 1 + performance_df['total_return']
+        performance_df['drawdown'] = net_value / net_value.cummax() - 1
         # order
         o: Order
         orders = [{
@@ -234,9 +230,9 @@ class Engine:
             _amount=amount,
             _avg_cost=avg_cost,
             _profit=profit,
-            _side = _side,
-            _action = 'close',
-            _commission = commission
+            _side=_side,
+            _action='close',
+            _commission=commission
         )
         portfolio.orders[self.make_id()] = new_order
         print('time: {}, symbol: {}, action: close, side: {}, amount: {}, avg_cost: {}, commission: {}'.
@@ -317,7 +313,7 @@ class Engine:
             value = _amount * cur_price
             commission = self.calc_commission(value, _pindex, 'open')
             avg_cost = (value - commission) / _amount
-            
+
         return _amount, round(avg_cost, 2), commission
 
     def order(self, _symbol, _amount, _side='long', _pindex=0):

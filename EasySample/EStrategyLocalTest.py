@@ -14,8 +14,8 @@ from EasyUtil.EReportingUtil import plot_performance
 client = MongoClient()
 
 # --------------------------初始化参数设定--------------------------
-start_date = '2014-1-1'
-end_date = '2016-1-1'
+start_date = '2005-1-1'
+end_date = '2019-1-1'
 frequency = 'day'
 portfolio_params = {
     '_starting_cash': 1000000,
@@ -33,21 +33,45 @@ e = Engine(
 reference = e.get_reference()
 
 # --------------------------策略撰写--------------------------
-w1 = 5
-w2 = 10
-q = deque(maxlen=w2)
+atr_window = 14
+atr_n = 1
+add_pct = 0.1
+stop_win_pct = 0.1
+stop_loss_pct = 0.1
+tr_q = deque(maxlen=atr_window)
+close_q = deque(maxlen=2)
+open_q = deque(maxlen=2)
 code = '000001.XSHE'
 for bar in reference:
     e.update(bar['time'])
 
-    q.append(bar['close'])
-    if len(q) < w2:
+    high = bar['high']
+    low = bar['low']
+    close = bar['close']
+    close_q.append(close)
+    if len(close_q) < 2:
         continue
-    if e.context.portfolio[0].positions_value == 0 and np.mean(list(q)[-w1:]) > np.mean(q):
-        e.order(code, 10000)
-    elif e.context.portfolio[0].positions_value > 0 and np.mean(list(q)[-w1:]) < np.mean(q):
+    tr = max([high - low, abs(high - close_q[0]), abs(close_q[0] - low)])
+    tr_q.append(tr)
+    if len(tr_q) < atr_window:
+        continue
+    atr = np.mean(tr_q)
+    # first open
+    if e.context.portfolio[0].positions_value == 0 and close - close_q[0] > atr_n * atr:
+        cash = e.context.portfolio[0].available_cash * add_pct
+        amount = int((cash / close) / 100)
+        order = e.order(code, amount)
+        open_q.append(order.avg_cost)
+    # add position
+    elif close > np.mean(open_q) * (1 + stop_win_pct):
+        cash = e.context.portfolio[0].available_cash * add_pct
+        amount = int((cash / close) / 100)
+        order = e.order(code, amount)
+        open_q.append(order.avg_cost)
+    # close
+    elif close < np.mean(open_q) * (1 - stop_loss_pct):
         e.order_target(code, 0)
+        open_q.clear()
 
 performance_df, order_df = e.get_report()
 plot_performance(performance_df)
-print('finished')
