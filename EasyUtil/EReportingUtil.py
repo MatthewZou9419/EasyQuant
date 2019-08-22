@@ -17,7 +17,7 @@ def plot_performance(performance_df):
     plt.ylim([-1, 0])
     plt.fill_between(performance_df.index, performance_df['drawdown'], 0, label='drawdown', color='gray', alpha=0.5)
     plt.twinx()
-    plt.plot(performance_df['total_return'], label='total_return')
+    plt.plot(performance_df['total_return0'], label='total_return0')
     plt.plot(performance_df['benchmark'], label='benchmark')
     plt.axhline(0, c='k')
     plt.legend()
@@ -31,12 +31,12 @@ def plot_performance(performance_df):
 
 def get_statistics(performance_df, order_df):
     # total return
-    total_return = performance_df['total_return'][-1]
+    total_return = performance_df['total_return0'][-1]
     bench_total_return = performance_df['benchmark'][-1]
     # annual return
     annual_return = (1 + total_return) ** (250 / len(performance_df)) - 1
     bench_annual_return = (1 + bench_total_return) ** (250 / len(performance_df)) - 1
-    net_value = 1 + performance_df['total_return']
+    net_value = 1 + performance_df['total_return0']
     bench_net_value = 1 + performance_df['benchmark']
     daily_return = (net_value / net_value.shift() - 1).dropna()
     bench_daily_return = (bench_net_value / bench_net_value.shift() - 1).dropna()

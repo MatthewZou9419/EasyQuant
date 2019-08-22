@@ -7,7 +7,6 @@ Easy quant platform by Matt.
 * Execution(Not considered yet)
 * Performance & Reporting
 
-
 # Demo
     from EasyEngine.EStrategyTarget import Strategy
     

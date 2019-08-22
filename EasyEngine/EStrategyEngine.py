@@ -109,14 +109,12 @@ class Engine:
                 position.price = self.data[symbol][cur_time]['close']
 
         perf = {
-            'time': cur_time,
-            'total_return': self.context.portfolio[0].total_return
+            'time': cur_time
         }
-        perf.update({
-            'position_pct{}'.format(i):
+        for i in range(len(self.context.portfolio)):
+            perf['total_return{}'.format(i)] = self.context.portfolio[i].total_return,
+            perf['position_pct{}'.format(i)] = \
                 self.context.portfolio[i].positions_value / self.context.portfolio[i].total_value
-            for i in range(len(self.context.portfolio))
-        })
         self.performance.append(perf)
 
     def get_report(self):
