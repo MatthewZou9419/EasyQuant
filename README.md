@@ -6,3 +6,15 @@ Easy quant platform by Matt.
 * Risk & Position management
 * Execution(Not considered yet)
 * Performance & Reporting
+
+
+# Demo
+    from EasyEngine.EStrategyTarget import Strategy
+    
+    class StrategyDemo(Strategy):
+        def initialize(self, context):  # execute at the very beginning
+            pass
+            
+        def handle_data(self, context):  # execute at every bar
+            pass
+        
