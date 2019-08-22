@@ -8,14 +8,56 @@ from collections import deque
 import numpy as np
 
 from EasyEngine.EStrategyEngine import Engine
-from EasyUtil.EMongoUtil import MongoClient
-from EasyUtil.EReportingUtil import plot_performance
+from EasyEngine.EStrategyTarget import Strategy
+from EasyUtil.EReportingUtil import plot_performance, get_statistics
 
-client = MongoClient()
 
-# --------------------------初始化参数设定--------------------------
+# --------------------------策略撰写--------------------------
+class TestStrategy(Strategy):
+    def initialize(self, context):
+        self.atr_window = 14
+        self.atr_n = 1
+        self.add_pct = 0.1
+        self.stop_win_pct = 0.1
+        self.stop_loss_pct = 0.1
+        self.tr_q = deque(maxlen=self.atr_window)
+        self.close_q = deque(maxlen=2)
+        self.open_q = deque(maxlen=2)
+        self.code = '000001.XSHE'
+
+    def handle_data(self, context):
+        high = context.cur_bar['high']
+        low = context.cur_bar['low']
+        close = context.cur_bar['close']
+        self.close_q.append(close)
+        if len(self.close_q) < 2:
+            return 
+        tr = max([high - low, abs(high - self.close_q[0]), abs(self.close_q[0] - low)])
+        self.tr_q.append(tr)
+        if len(self.tr_q) < self.atr_window:
+            return 
+        atr = np.mean(self.tr_q)
+        # first open
+        if context.portfolio[0].positions_value == 0 and close - self.close_q[0] > self.atr_n * atr:
+            cash = context.portfolio[0].available_cash * self.add_pct
+            amount = int((cash / close) / 100)
+            order = e.order(self.code, amount)
+            self.open_q.append(order.avg_cost)
+        # add position
+        elif close > np.mean(self.open_q) * (1 + self.stop_win_pct):
+            cash = context.portfolio[0].available_cash * self.add_pct
+            amount = int((cash / close) / 100)
+            order = e.order(self.code, amount)
+            self.open_q.append(order.avg_cost)
+        # close
+        elif close < np.mean(self.open_q) * (1 - self.stop_loss_pct):
+            e.order_target(self.code, 0)
+            self.open_q.clear()
+
+
+# --------------------------策略运行--------------------------
 start_date = '2005-1-1'
-end_date = '2019-1-1'
+end_date = '2019-8-20'
 frequency = 'day'
 portfolio_params = {
     '_starting_cash': 1000000,
@@ -23,6 +65,7 @@ portfolio_params = {
 reference_symbol = '000001.XSHE'
 
 e = Engine(
+    _strategy=TestStrategy,
     _start_date=start_date,
     _end_date=end_date,
     _frequency=frequency,
@@ -30,48 +73,8 @@ e = Engine(
     _reference_symbol=reference_symbol
 )
 
-reference = e.get_reference()
-
-# --------------------------策略撰写--------------------------
-atr_window = 14
-atr_n = 1
-add_pct = 0.1
-stop_win_pct = 0.1
-stop_loss_pct = 0.1
-tr_q = deque(maxlen=atr_window)
-close_q = deque(maxlen=2)
-open_q = deque(maxlen=2)
-code = '000001.XSHE'
-for bar in reference:
-    e.update(bar['time'])
-
-    high = bar['high']
-    low = bar['low']
-    close = bar['close']
-    close_q.append(close)
-    if len(close_q) < 2:
-        continue
-    tr = max([high - low, abs(high - close_q[0]), abs(close_q[0] - low)])
-    tr_q.append(tr)
-    if len(tr_q) < atr_window:
-        continue
-    atr = np.mean(tr_q)
-    # first open
-    if e.context.portfolio[0].positions_value == 0 and close - close_q[0] > atr_n * atr:
-        cash = e.context.portfolio[0].available_cash * add_pct
-        amount = int((cash / close) / 100)
-        order = e.order(code, amount)
-        open_q.append(order.avg_cost)
-    # add position
-    elif close > np.mean(open_q) * (1 + stop_win_pct):
-        cash = e.context.portfolio[0].available_cash * add_pct
-        amount = int((cash / close) / 100)
-        order = e.order(code, amount)
-        open_q.append(order.avg_cost)
-    # close
-    elif close < np.mean(open_q) * (1 - stop_loss_pct):
-        e.order_target(code, 0)
-        open_q.clear()
-
-performance_df, order_df = e.get_report()
+performance_df, order_df = e.run()
+stats = get_statistics(performance_df, order_df)
 plot_performance(performance_df)
+for k, v in stats.items():
+    print('{}: {}'.format(k, v))

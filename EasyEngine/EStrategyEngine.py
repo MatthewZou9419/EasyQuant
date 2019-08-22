@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import uuid
 
-from EasyEngine.EStrategyTarget import Order, Position, Portfolio, Context
+from EasyEngine.EStrategyTarget import Order, Position, Portfolio, Context, Strategy
 from EasyUtil.EConstantsUtil import FREQUENCY, PORTFOLIO_PARAMS
 from EasyUtil.EConvertUtil import frequency2data_key
 from EasyUtil.EDateUtil import str2date
@@ -23,8 +23,9 @@ class Engine:
     data = {}
     performance = []
 
-    def __init__(self, _start_date, _end_date, _frequency, _portfolio_params, _reference_symbol='000001.XSHE'):
+    def __init__(self, _strategy, _start_date, _end_date, _frequency, _portfolio_params, _reference_symbol='000001.XSHE'):
         """
+        :param _strategy: 策略类
         :param _start_date: 回测开始日期
         :param _end_date: 回测结束日期
         :param _frequency: 回测频率
@@ -42,6 +43,7 @@ class Engine:
         # frequency check
         assert _frequency in FREQUENCY, 'Frequency should be one of {}!'.format(', '.join(FREQUENCY))
         self.data_key = frequency2data_key(_frequency)
+        self.strategy = _strategy
         commission_collection = self.client.get_documents('abstract', 'commission')
         commission_dict = {c['market']: c['commission'] for c in commission_collection}
 
@@ -72,7 +74,7 @@ class Engine:
             )
         self.context = Context(
             _portfolio=portfolio,
-            _cur_time=_start_date,
+            _cur_bar=None,
             _start_date=_start_date,
             _end_date=_end_date,
             _frequency=_frequency,
@@ -91,22 +93,23 @@ class Engine:
     def make_id():
         return uuid.uuid4().hex
 
-    def update(self, _time):
+    def update(self, _bar):
         """
         更新函数
-        :param _time: 当前时间
-        - Context.cur_time
+        :param _bar: 当前时间
+        - Context.cur_bar
         - Position.price
         """
-        self.context.cur_time = _time
+        self.context.cur_bar = _bar
+        cur_time = _bar['time']
         for portfolio in self.context.portfolio:
             for symbol, position in portfolio.long_positions.items():
-                position.price = self.data[symbol][_time]['close']
+                position.price = self.data[symbol][cur_time]['close']
             for symbol, position in portfolio.short_positions.items():
-                position.price = self.data[symbol][_time]['close']
+                position.price = self.data[symbol][cur_time]['close']
 
         perf = {
-            'time': _time,
+            'time': cur_time,
             'total_return': self.context.portfolio[0].total_return
         }
         perf.update({
@@ -157,7 +160,7 @@ class Engine:
         开仓函数
         """
         amount, avg_cost, commission = self.calc_open_params(_symbol, _amount, _side, _pindex)
-        cur_time = self.context.cur_time
+        cur_time = self.context.cur_bar['time']
         value = amount * avg_cost
         # add a new order
         new_order = Order(
@@ -175,8 +178,8 @@ class Engine:
         # update position
         if _side == 'long' and _symbol in portfolio.long_positions:
             position: Position = portfolio.long_positions[_symbol]
+            position.avg_cost = (position.avg_cost * position.amount + value) / (position.amount + amount)
             position.amount += amount
-            position.avg_cost = position.value / position.amount
             portfolio.available_cash -= value
         elif _side == 'short' and _symbol in portfolio.short_positions:
             pass
@@ -205,22 +208,22 @@ class Engine:
         平仓函数
         """
         amount, avg_cost, commission = self.calc_close_params(_symbol, _amount, _side, _pindex)
-        cur_time = self.context.cur_time
+        cur_time = self.context.cur_bar['time']
         value = amount * avg_cost
         portfolio: Portfolio = self.context.portfolio[_pindex]
         # update position
         if _side == 'long':
             position: Position = portfolio.long_positions[_symbol]
+            profit = value - position.avg_cost * amount
             # close partially
             if amount < position.amount:
+                position.avg_cost = (position.avg_cost * position.amount - value) / (position.amount - amount)
                 position.amount -= amount
-                position.avg_cost = position.value / position.amount
             # close all
             else:
                 portfolio.long_positions.pop(_symbol)
             # update portfolio
             portfolio.available_cash += value
-            profit = value - position.avg_cost * amount
         elif _side == 'short':
             pass
         # add a new order
@@ -269,7 +272,7 @@ class Engine:
             self.data[_symbol] = {c['time']: c for c in collection}
 
         # value check
-        cur_time = self.context.cur_time
+        cur_time = self.context.cur_bar['time']
         cur_price = self.data[_symbol][cur_time]['close']
         portfolio: Portfolio = self.context.portfolio[_pindex]
         unit = portfolio.commission['unit']
@@ -298,7 +301,7 @@ class Engine:
             return
 
         # value check
-        cur_time = self.context.cur_time
+        cur_time = self.context.cur_bar['time']
         cur_price = self.data[_symbol][cur_time]['close']
         portfolio: Portfolio = self.context.portfolio[_pindex]
         unit = portfolio.commission['unit']
@@ -355,3 +358,21 @@ class Engine:
         """
         按目标价值下单
         """
+        
+    def run(self):
+        """
+        策略运行
+        """
+        reference = self.get_reference()
+        init = True
+        for bar in reference:
+            self.update(bar)
+            
+            if init:
+                self.strategy.initialize(self, self.context)
+                init = False
+                continue    
+            
+            self.strategy.handle_data(self, self.context)
+            
+        return self.get_report()

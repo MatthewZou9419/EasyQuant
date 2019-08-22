@@ -4,6 +4,7 @@ Created on 2019/8/10 13:13
 @file: EStrategyTarget.py
 @author: Matt
 """
+from abc import abstractmethod
 
 
 class Order:
@@ -81,10 +82,23 @@ class Context:
     """
     策略信息类
     """
-    def __init__(self, _portfolio, _cur_time, _start_date, _end_date, _frequency, _reference_symbol):
+    def __init__(self, _portfolio, _cur_bar, _start_date, _end_date, _frequency, _reference_symbol):
         self.portfolio = _portfolio  # 资产组合
-        self.cur_time = _cur_time  # 当前时间
+        self.cur_bar = _cur_bar  # 当前bar
         self.start_date = _start_date  # 策略开始日期
         self.end_date = _end_date  # 策略结束日期
         self.frequency = _frequency  # 运行频率
         self.reference_symbol = _reference_symbol  # 参考标的
+
+
+class Strategy:
+    """
+    策略基类
+    """
+    @abstractmethod
+    def initialize(self, context):
+        return NotImplementedError('initialize')
+
+    @abstractmethod
+    def handle_data(self, context):
+        return NotImplementedError('handle_data')
