@@ -52,15 +52,15 @@ class Portfolio:
     """
     账户类
     """
-    def __init__(self, _available_cash, _long_positions, _short_positions, _orders, _starting_cash, _ptype, 
-                 _commission):
+    def __init__(self, _available_cash, _starting_cash, _ptype, _commission):
         """
         :param _available_cash: 开平仓更新
         """
         self.available_cash = _available_cash  # 可用资金
-        self.long_positions = _long_positions  # 多仓
-        self.short_positions = _short_positions  # 空仓
-        self.orders = _orders  # 所有订单
+        self.long_positions = {}  # 多仓
+        self.short_positions = {}  # 空仓
+        self.orders = {}  # 所有订单
+        self.waiting_orders = {}  # 等待成交订单
         self.starting_cash = _starting_cash  # 初始资金
         self.ptype = _ptype  # 账户类型
         self.commission = _commission  # 手续费
@@ -82,9 +82,9 @@ class Context:
     """
     策略信息类
     """
-    def __init__(self, _portfolio, _cur_bar, _start_date, _end_date, _frequency, _reference_symbol):
+    def __init__(self, _portfolio, _start_date, _end_date, _frequency, _reference_symbol):
         self.portfolio = _portfolio  # 资产组合
-        self.cur_bar = _cur_bar  # 当前bar
+        self.cur_bar = None  # 当前bar
         self.start_date = _start_date  # 策略开始日期
         self.end_date = _end_date  # 策略结束日期
         self.frequency = _frequency  # 运行频率

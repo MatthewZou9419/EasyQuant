@@ -64,9 +64,6 @@ class Engine:
             portfolio.append(
                 Portfolio(
                     _available_cash=starting_cash,
-                    _long_positions={},
-                    _short_positions={},
-                    _orders={},
                     _starting_cash=starting_cash,
                     _ptype=ptype,
                     _commission=commission
@@ -74,7 +71,6 @@ class Engine:
             )
         self.context = Context(
             _portfolio=portfolio,
-            _cur_bar=None,
             _start_date=_start_date,
             _end_date=_end_date,
             _frequency=_frequency,
@@ -125,10 +121,9 @@ class Engine:
         benchmark = np.array([r['close'] for r in self.get_reference()])
         benchmark = benchmark / benchmark[0] - 1
         performance_df['benchmark'] = benchmark
-        net_value = 1 + performance_df['total_return']
+        net_value = 1 + performance_df['total_return0']
         performance_df['drawdown'] = net_value / net_value.cummax() - 1
         # order
-        o: Order
         orders = [{
             'add_time': o.add_time,
             'symbol': o.symbol,
@@ -274,6 +269,7 @@ class Engine:
         cur_price = self.data[_symbol][cur_time]['close']
         portfolio: Portfolio = self.context.portfolio[_pindex]
         unit = portfolio.commission['unit']
+        margin = portfolio.commission['margin']
         _amount *= unit
         value = _amount * cur_price
         commission = self.calc_commission(value, _pindex, 'open')

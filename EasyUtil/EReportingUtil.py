@@ -5,10 +5,35 @@ Created on 2019/8/21 下午4:16
 @author: ZouHao
 """
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from pandas.plotting import register_matplotlib_converters
+from pyecharts.charts import Kline
+from pyecharts import options as opts
+from EasyUtil.EMongoUtil import MongoClient
 
 register_matplotlib_converters()
+
+
+class Reporting:
+    client = MongoClient()
+
+    def plot_kline(self, symbol, data_key):
+        document = self.client.get_documents('abstract', 'market', {'symbol': symbol})[0]
+        collection_name = '{}|{}|{}'.format(symbol, document['market'], data_key)
+        df = pd.DataFrame(list(self.client.get_documents('data', collection_name, {'paused': 0}).sort('time')))
+        xaxis = df['time'].tolist()
+        kline = Kline(opts.InitOpts(width='1400px', height='500px', page_title=collection_name))\
+            .add_xaxis(xaxis)\
+            .add_yaxis('kline', df[['open', 'close', 'low', 'high']].values.tolist())\
+            .set_global_opts(
+                tooltip_opts=opts.TooltipOpts(trigger='axis', axis_pointer_type='cross'),
+                yaxis_opts=opts.AxisOpts(
+                    is_scale=True, splitarea_opts=opts.SplitAreaOpts(areastyle_opts=opts.AreaStyleOpts(0.5))
+                ),
+                datazoom_opts=opts.DataZoomOpts(type_='inside', range_start=0, range_end=100),
+            )
+        kline.render()
 
 
 def plot_performance(performance_df):
