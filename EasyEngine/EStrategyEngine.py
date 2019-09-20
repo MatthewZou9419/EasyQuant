@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import uuid
 
-from EasyEngine.EStrategyTarget import Order, Position, Portfolio, Context, Strategy
+from EasyEngine.EStrategyTarget import Order, Position, Portfolio, Context
 from EasyUtil.EConstantsUtil import FREQUENCY, PORTFOLIO_PARAMS
 from EasyUtil.EConvertUtil import frequency2data_key
 from EasyUtil.EDateUtil import str2date
